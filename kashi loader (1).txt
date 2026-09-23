@@ -1,0 +1,198 @@
+-- Kashi Loader
+-- Place in: ReplicatedFirst > LocalScript
+
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+
+ReplicatedFirst:RemoveDefaultLoadingScreen()
+
+local startTime = os.clock()
+local texturesRemoved = 0
+local effectsDisabled = 0
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+local function processObject(obj)
+    local class = obj.ClassName
+
+    if class == "ParticleEmitter" or class == "Fire" or class == "Smoke" or class == "Sparkles" or class == "Trail" then
+        obj:Destroy()
+        effectsDisabled += 1
+
+    elseif class == "Decal" or class == "Texture" then
+        obj:Destroy()
+        texturesRemoved += 1
+
+    elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight" then
+        obj:Destroy()
+        effectsDisabled += 1
+
+    elseif obj:IsA("BasePart") then
+        pcall(function() obj.CastShadow = false end)
+    end
+end
+
+local function scanWorkspace()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        processObject(obj)
+    end
+end
+
+workspace.DescendantAdded:Connect(processObject)
+
+Lighting.FogEnd = 100000
+Lighting.FogStart = 99999
+for _, obj in ipairs(Lighting:GetChildren()) do
+    if obj:IsA("Atmosphere") then obj:Destroy() end
+end
+Lighting.ChildAdded:Connect(function(obj)
+    if obj:IsA("Atmosphere") then obj:Destroy() end
+end)
+
+settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+scanWorkspace()
+
+local elapsed = string.format("%.1f", os.clock() - startTime)
+
+-- ============================================
+-- UI
+-- ============================================
+local player = Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "KashiLoader"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- Shadow layer (gives depth)
+local shadow = Instance.new("Frame")
+shadow.Size = UDim2.new(0, 304, 0, 94)
+shadow.Position = UDim2.new(0.5, -154, 0, 20)
+shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+shadow.BackgroundTransparency = 0.6
+shadow.BorderSizePixel = 0
+shadow.ZIndex = 1
+shadow.Parent = gui
+Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 12)
+
+-- Main frame
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 300, 0, 90)
+frame.Position = UDim2.new(0.5, -150, 0, 18)
+frame.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
+frame.BorderSizePixel = 0
+frame.ZIndex = 2
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+-- Top gradient strip
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 3)
+topBar.Position = UDim2.new(0, 0, 0, 0)
+topBar.BackgroundColor3 = Color3.fromRGB(100, 180, 255)
+topBar.BorderSizePixel = 0
+topBar.ZIndex = 3
+topBar.Parent = frame
+
+local topBarCorner = Instance.new("UICorner")
+topBarCorner.CornerRadius = UDim.new(0, 12)
+topBarCorner.Parent = topBar
+
+local topGrad = Instance.new("UIGradient")
+topGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 140, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 100, 255)),
+})
+topGrad.Parent = topBar
+
+-- Close button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 22, 0, 22)
+closeBtn.Position = UDim2.new(1, -28, 0, 10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(160, 160, 160)
+closeBtn.TextSize = 11
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.ZIndex = 4
+closeBtn.Parent = frame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(1, 0)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -50, 0, 22)
+title.Position = UDim2.new(0, 16, 0, 12)
+title.BackgroundTransparency = 1
+title.Text = "kashi loader"
+title.TextColor3 = Color3.fromRGB(240, 240, 245)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.ZIndex = 4
+title.Parent = frame
+
+-- Divider
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -32, 0, 1)
+divider.Position = UDim2.new(0, 16, 0, 38)
+divider.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+divider.BorderSizePixel = 0
+divider.ZIndex = 3
+divider.Parent = frame
+
+-- Load time (left side)
+local timeLabel = Instance.new("TextLabel")
+timeLabel.Size = UDim2.new(0.5, 0, 0, 18)
+timeLabel.Position = UDim2.new(0, 16, 0, 48)
+timeLabel.BackgroundTransparency = 1
+timeLabel.Text = "⏱  " .. elapsed .. "s"
+timeLabel.TextColor3 = Color3.fromRGB(100, 200, 130)
+timeLabel.Font = Enum.Font.GothamBold
+timeLabel.TextSize = 13
+timeLabel.TextXAlignment = Enum.TextXAlignment.Left
+timeLabel.ZIndex = 4
+timeLabel.Parent = frame
+
+-- Textures removed (right side)
+local texLabel = Instance.new("TextLabel")
+texLabel.Size = UDim2.new(0.5, -16, 0, 18)
+texLabel.Position = UDim2.new(0.5, 0, 0, 48)
+texLabel.BackgroundTransparency = 1
+texLabel.Text = "🖼  " .. texturesRemoved .. " textures"
+texLabel.TextColor3 = Color3.fromRGB(160, 160, 175)
+texLabel.Font = Enum.Font.Gotham
+texLabel.TextSize = 12
+texLabel.TextXAlignment = Enum.TextXAlignment.Right
+texLabel.ZIndex = 4
+texLabel.Parent = frame
+
+-- Effects disabled (bottom left)
+local fxLabel = Instance.new("TextLabel")
+fxLabel.Size = UDim2.new(1, -32, 0, 16)
+fxLabel.Position = UDim2.new(0, 16, 0, 67)
+fxLabel.BackgroundTransparency = 1
+fxLabel.Text = "✦  " .. effectsDisabled .. " effects disabled"
+fxLabel.TextColor3 = Color3.fromRGB(110, 110, 130)
+fxLabel.Font = Enum.Font.Gotham
+fxLabel.TextSize = 11
+fxLabel.TextXAlignment = Enum.TextXAlignment.Left
+fxLabel.ZIndex = 4
+fxLabel.Parent = frame
+
+-- Auto close after 8s
+task.delay(8, function()
+    if gui and gui.Parent then
+        gui:Destroy()
+    end
+end)
+
+print("[KashiLoader] Loaded in " .. elapsed .. "s | Textures: " .. texturesRemoved .. " | Effects: " .. effectsDisabled)
