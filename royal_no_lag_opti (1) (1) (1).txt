@@ -1,0 +1,1559 @@
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+
+local OPT_ON = true
+local HARSH_ON = true
+local TARGET_FPS = 2000
+
+local function findGlobalFunction(name)
+    local fn
+    pcall(function() fn = getgenv and getgenv()[name] end)
+    if type(fn) == "function" then return fn end
+    pcall(function() fn = _G[name] end)
+    if type(fn) == "function" then return fn end
+    pcall(function() fn = getfenv(0)[name] end)
+    if type(fn) == "function" then return fn end
+    pcall(function() fn = rawget(getfenv(2), name) end)
+    if type(fn) == "function" then return fn end
+    return nil
+end
+
+local FFlags = {
+    ["FFlagTaskSchedulerLimitTargetFpsToDevice"] = "False",
+    ["FFlagTaskSchedulerLimitTargetFpsTo2402"] = "False",
+    ["FFlagGameBasicSettingsFramerateCap5"] = "False",
+    ["DFIntTaskSchedulerTargetFps"] = tostring(TARGET_FPS),
+    ["FFlagHandleAltEnterFullscreenManually"] = "False",
+    ["FFlagEnableTextureStreaming"] = "True",
+    ["FFlagPreloadAllFonts"] = "True",
+    ["DFFlagEnableSoundPreloading"] = "True",
+    ["DFFlagEnableMeshPreloading"] = "True",
+    ["DFFlagEnableMeshPreloading2"] = "True",
+    ["DFFlagEnableTexturePreloading"] = "True",
+    ["FFlagAssetPreloadingIXP"] = "True",
+    ["DFFlagEnablePreloadAvatarAssets"] = "True",
+    ["DFFlagTeleportClientAssetPreloadingEnabledIXP"] = "True",
+    ["DFFlagTeleportClientAssetPreloadingEnabledIXP2"] = "True",
+    ["DFFlagTeleportClientAssetPreloadingEnabled9"] = "True",
+    ["DFFlagTeleportClientAssetPreloadingDoingExperiment"] = "True",
+    ["DFFlagTeleportClientAssetPreloadingDoingExperiment2"] = "True",
+    ["DFFlagTeleportPreloadingMetrics5"] = "True",
+    ["DFFlagPreloadAsyncSupportTexturePack"] = "True",
+    ["FFlagPreloadTextureItemsOption4"] = "True",
+    ["FFlagUseNewLuaPreloadAssets"] = "True",
+    ["DFFlagEnableScriptPreloadOnJoin"] = "True",
+    ["FFlagLuaAppsScriptPreload"] = "True",
+    ["DFFlagRemoveUnusedKtxMetadata"] = "True",
+    ["DFIntContentProviderMaximumRequestsPerStep"] = "10000",
+    ["DFIntContentProviderMaximumRequestsPerSecond"] = "10000",
+    ["DFIntSolidModelStreamDebounceSecs"] = "0",
+    ["FIntRenderGrassDetailStrands"] = "0",
+    ["FIntRenderGrassHeightScaler"] = "0",
+    ["FIntTerrainOctreeMaxCells"] = "0",
+    ["FIntDebugForceMSAASamples"] = "0",
+    ["FIntRenderShadowIntensity"] = "0",
+    ["DFIntSignalRCoreTimerMs"] = "50",
+    ["FIntActivatedCountTimerMSMouse"] = "0",
+    ["FIntActivatedCountTimerMSKeyboard"] = "0",
+    ["DFIntDebugRestrictGCDistance"] = "1",
+    ["DFIntStreamingTargetRadius"] = "64",
+    ["DFIntStreamingMinRadius"] = "32",
+    ["FIntRomarkStartWithGraphQualityLevel"] = "1",
+    ["FIntTerrainArraySliceSize"] = "0",
+    ["FIntRenderLocalLightUpdatesMax"] = "1",
+    ["FIntRenderLocalLightUpdatesMin"] = "1",
+    ["FIntRenderShadowmapBias"] = "0",
+    ["FFlagFastGPULightCulling3"] = "True",
+    ["FFlagDebugDisableDeferredLighting"] = "True",
+    ["DFFlagDisableDPIScale"] = "True",
+    ["FFlagDisablePostFx"] = "True",
+    ["FIntFRMMinGrassDistance"] = "0",
+    ["FIntFRMMaxGrassDistance"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistance"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL12"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL23"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL34"] = "0",
+}
+
+pcall(function()
+    local setFF = findGlobalFunction("setfflag")
+    if not setFF then return end
+    for flag, value in pairs(FFlags) do pcall(setFF, flag, value) end
+end)
+
+pcall(function()
+    local setCap = findGlobalFunction("setfpscap")
+    if setCap then setCap(2000) end
+end)
+
+local KILL_NAMES = {
+    RobloxLoadingGUI=true, RobloxLoadingGui=true, LoadingGui=true,
+    LoadingGUI=true, LoadingScreen=true, CustomLoadingScreen=true,
+    BackgroundScreen=true, DevGUIBlackoutCurtain=true,
+}
+
+local function looksLikeLoadingGui(inst)
+    if not inst then return false end
+    if KILL_NAMES[inst.Name] then return true end
+    local ln = string.lower(inst.Name)
+    return string.find(ln,"loading",1,true) ~= nil or string.find(ln,"blackout",1,true) ~= nil
+end
+
+local function removeLoadingGui(inst)
+    if not inst or inst.Parent ~= CoreGui then return end
+    if looksLikeLoadingGui(inst) then
+        pcall(function() inst.Enabled = false end)
+        pcall(function() inst:Destroy() end)
+    end
+end
+
+pcall(function() ReplicatedFirst:RemoveDefaultLoadingScreen() end)
+for _, child in ipairs(CoreGui:GetChildren()) do removeLoadingGui(child) end
+CoreGui.ChildAdded:Connect(function(child) task.defer(removeLoadingGui, child) end)
+for i = 0, 10 do
+    task.delay(i * 0.1, function()
+        pcall(function() ReplicatedFirst:RemoveDefaultLoadingScreen() end)
+        for _, child in ipairs(CoreGui:GetChildren()) do removeLoadingGui(child) end
+    end)
+end
+
+local restoreList = {}
+local remembered = setmetatable({}, { __mode = "k" })
+local RESTORE_CAP = 25000
+
+local function remember(inst, property, value)
+    if not inst or #restoreList >= RESTORE_CAP then return end
+    local props = remembered[inst]
+    if not props then props = {}; remembered[inst] = props end
+    if props[property] then return end
+    props[property] = true
+    restoreList[#restoreList+1] = {Instance=inst, Property=property, Value=value}
+end
+
+local function restoreAll()
+    if #restoreList == 0 then return end
+    task.spawn(function()
+        local idx = 1
+        local count = #restoreList
+        while idx <= count do
+            local fs = os.clock()
+            while idx <= count and os.clock()-fs < 0.0015 do
+                local e = restoreList[idx]
+                pcall(function() if e.Instance and e.Instance.Parent then e.Instance[e.Property] = e.Value end end)
+                idx += 1
+            end
+            RunService.Heartbeat:Wait()
+        end
+        table.clear(restoreList); table.clear(remembered)
+    end)
+end
+
+local function budgetedSweep(roots, callback)
+    task.spawn(function()
+        for _, root in ipairs(roots) do
+            local ok, desc = pcall(function() return root:GetDescendants() end)
+            if ok then
+                local idx, count = 1, #desc
+                while idx <= count do
+                    local fs = os.clock()
+                    while idx <= count and os.clock()-fs < 0.0015 do
+                        pcall(callback, desc[idx]); idx += 1
+                    end
+                    RunService.Heartbeat:Wait()
+                end
+            end
+        end
+    end)
+end
+
+local function permanentStrip(inst)
+    if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Smoke")
+        or inst:IsA("Fire") or inst:IsA("Sparkles") or inst:IsA("Beam") then
+        inst.Enabled = false
+    elseif inst:IsA("PostEffect") then inst.Enabled = false
+    elseif inst:IsA("Explosion") then inst.Visible = false
+    elseif inst:IsA("MeshPart") then
+        pcall(function() inst.RenderFidelity = Enum.RenderFidelity.Performance; inst.CastShadow = false; inst.Reflectance = 0 end)
+    elseif inst:IsA("BasePart") then
+        pcall(function() inst.CastShadow = false; inst.Reflectance = 0 end)
+    end
+end
+
+local loadPhase = true
+
+local function harshStrip(inst)
+    if not loadPhase then return end
+    if inst:IsA("Decal") or inst:IsA("Texture") then
+        if inst.Transparency ~= 1 then remember(inst,"Transparency",inst.Transparency); inst.Transparency = 1 end
+    elseif inst:IsA("BillboardGui") or inst:IsA("SurfaceGui") then
+        if inst.Enabled then remember(inst,"Enabled",inst.Enabled); inst.Enabled = false end
+    elseif inst:IsA("Sound") then
+        if inst.Volume ~= 0 then remember(inst,"Volume",inst.Volume); inst.Volume = 0 end
+    end
+end
+
+local animationConnections = {}
+local function stopAnimator(animator)
+    if not animator or not animator:IsA("Animator") then return end
+    pcall(function() for _, t in ipairs(animator:GetPlayingAnimationTracks()) do t:Stop(0); pcall(function() t:Destroy() end) end end)
+    animationConnections[#animationConnections+1] = animator.AnimationPlayed:Connect(function(t)
+        task.defer(function() pcall(function() t:Stop(0); t:Destroy() end) end)
+    end)
+end
+
+local function disableAnimations(inst)
+    if inst:IsA("Animator") then stopAnimator(inst)
+    elseif inst:IsA("AnimationController") then pcall(function() local a=inst:FindFirstChildOfClass("Animator"); if a then stopAnimator(a) end end)
+    elseif inst:IsA("Animation") then pcall(function() inst.AnimationId = "" end)
+    elseif (inst:IsA("LocalScript") or inst:IsA("Script")) and string.lower(inst.Name) == "animate" then pcall(function() inst.Disabled = true end)
+    end
+end
+
+budgetedSweep({Workspace, Players}, disableAnimations)
+animationConnections[#animationConnections+1] = Workspace.DescendantAdded:Connect(function(i) pcall(disableAnimations,i) end)
+animationConnections[#animationConnections+1] = Players.DescendantAdded:Connect(function(i) pcall(disableAnimations,i) end)
+
+pcall(function()
+    Lighting.GlobalShadows = false
+    Lighting.EnvironmentDiffuseScale = 0
+    Lighting.EnvironmentSpecularScale = 0
+    Lighting.ShadowSoftness = 0
+end)
+
+pcall(function()
+    local terrain = Workspace:FindFirstChildOfClass("Terrain")
+    if terrain then
+        terrain.Decoration = false
+        terrain.WaterWaveSize = 0; terrain.WaterWaveSpeed = 0
+        terrain.WaterReflectance = 0; terrain.WaterTransparency = 1
+        local clouds = terrain:FindFirstChildOfClass("Clouds")
+        if clouds then clouds.Enabled = false end
+    end
+end)
+
+pcall(function()
+    local gs = UserSettings():GetService("UserGameSettings")
+    remember(gs, "MasterVolume", gs.MasterVolume)
+    gs.MasterVolume = 0
+    remember(gs, "SavedQualityLevel", gs.SavedQualityLevel)
+    gs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+end)
+
+pcall(function()
+    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+end)
+
+budgetedSweep({Workspace, Lighting}, function(inst)
+    permanentStrip(inst)
+    if loadPhase then harshStrip(inst) end
+end)
+
+local permanentConnections = {}
+permanentConnections[#permanentConnections+1] = Workspace.DescendantAdded:Connect(function(inst)
+    pcall(permanentStrip, inst)
+    if loadPhase then pcall(harshStrip, inst) end
+end)
+permanentConnections[#permanentConnections+1] = Lighting.DescendantAdded:Connect(function(inst) pcall(permanentStrip, inst) end)
+
+local finished = false
+local function finishLoadPhase()
+    if finished then return end
+    finished = true; loadPhase = false
+    restoreAll()
+end
+
+local function waitForPlayableCharacter()
+    local lp = Players.LocalPlayer
+    if not lp then Players:GetPropertyChangedSignal("LocalPlayer"):Wait(); lp = Players.LocalPlayer end
+    local char = lp.Character or lp.CharacterAdded:Wait()
+    char:WaitForChild("Humanoid", 15)
+    char:WaitForChild("HumanoidRootPart", 15)
+    RunService.RenderStepped:Wait()
+    finishLoadPhase()
+end
+
+task.spawn(waitForPlayableCharacter)
+task.delay(30, finishLoadPhase)
+
+_G.reyy_LoadOptStop = function()
+    for _, c in ipairs(permanentConnections) do if c and c.Connected then c:Disconnect() end end
+    for _, c in ipairs(animationConnections) do if c and c.Connected then c:Disconnect() end end
+    table.clear(permanentConnections); table.clear(animationConnections)
+    finishLoadPhase()
+end
+task.spawn(function()
+    local _okOPT, _errOPT = pcall(function()
+
+        _G.__SXE_KillQ = {}
+        do
+            local Players = game:GetService("Players")
+            local function pin(a)
+                if a and a.Name == "Animate" then
+                    pcall(function() a.Disabled = true end)
+                end
+            end
+            local function hook(char)
+                if not char then return end
+                pin(char:FindFirstChild("Animate"))
+                char.ChildAdded:Connect(pin)
+            end
+            local function onLp(lp)
+                if not lp then return end
+                if lp.Character then hook(lp.Character) end
+                lp.CharacterAdded:Connect(hook)
+            end
+            local lp = Players.LocalPlayer
+            if lp then
+                onLp(lp)
+            else
+                Players.PlayerAdded:Connect(onLp)
+            end
+        end
+        do
+            local RS = game:GetService("ReplicatedStorage")
+            local KEEP = {
+                CustomProximityPromptController = true,
+                InteractController = true,
+                PlotController = true,
+                AnimalController = true,
+                PetController = true,
+                WorldBrainrotController = true,
+                EquipBrainrotsController = true,
+                EquipBrainrotsRenderController = true,
+                SelectBrainrotsController = true,
+                BrainrotPreloadingController = true,
+                AssetStreamController = true,
+                AdminPanelController = true,
+                NotificationController = true,
+            }
+            local function wrap(fn)
+                if newcclosure then
+                    return newcclosure(fn)
+                end
+                return fn
+            end
+            local function isCtrlFolder(x)
+                return typeof(x) == "Instance" and x.Name == "Controllers" and x.Parent == RS
+            end
+            local function callerName()
+                if not getcallingscript then
+                    return "?"
+                end
+                local ok, s = pcall(getcallingscript)
+                if not ok or s == nil then
+                    return "nil"
+                end
+                return tostring(s.Name)
+            end
+            local function fromLoader()
+                return callerName() == "ClientLoader"
+            end
+            local function filt(kids)
+                if type(kids) ~= "table" then
+                    return kids
+                end
+                local out = {}
+                for i = 1, #kids do
+                    local k = kids[i]
+                    if k and KEEP[k.Name] then
+                        out[#out + 1] = k
+                    end
+                end
+                return out
+            end
+            local oldNc
+            local undone = false
+            local function unhook()
+                if undone then return end
+                undone = true
+                pcall(function()
+                    if oldNc then
+                        hookmetamethod(game, "__namecall", oldNc)
+                    end
+                end)
+            end
+            pcall(function()
+                oldNc = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+                    local method = getnamecallmethod()
+                    if type(method) ~= "string" then
+                        return oldNc(self, ...)
+                    end
+                    local ml = string.lower(method)
+                    if ml ~= "getchildren" then
+                        return oldNc(self, ...)
+                    end
+                    if not isCtrlFolder(self) then
+                        return oldNc(self, ...)
+                    end
+                    if not fromLoader() then
+                        return oldNc(self, ...)
+                    end
+                    return filt(oldNc(self, ...))
+                end))
+            end)
+            task.delay(6, unhook)
+        end
+        task.spawn(function()
+            local RS = game:GetService("ReplicatedStorage")
+            local KILL = {
+                RNGMachineVFX = true,
+                LuckIcons = true,
+                GlossaryBackground = true,
+                AnimationGraphEditor = true,
+                ML = true,
+                PlayWaveEvents = true,
+            }
+            local function yeet(ch)
+                if not ch then return end
+                pcall(function()
+                    ch:Destroy()
+                end)
+            end
+            local function dropKill(ch)
+                if ch and KILL[ch.Name] then yeet(ch) end
+            end
+            local kids = RS:GetChildren()
+            for i = 1, #kids do dropKill(kids[i]) end
+            RS.ChildAdded:Connect(dropKill)
+        end)
+        task.wait()
+        local function _sxeBusy()
+            return _G.__SXE_VelFlying == true
+        end
+        function _G.SXE_Kill(inst)
+            if not inst then return end
+            if _sxeBusy() then
+                local q = _G.__SXE_KillQ
+                q[#q + 1] = inst
+                return
+            end
+            pcall(function() inst:Destroy() end)
+        end
+        function _G.SXE_FlushKills()
+            local q = _G.__SXE_KillQ
+            _G.__SXE_KillQ = {}
+            for i = 1, #q do
+                local x = q[i]
+                if x and x.Parent then pcall(function() x:Destroy() end) end
+            end
+        end
+        local function __sxeStrip()
+            local Players = game:GetService("Players")
+            local Lighting = game:GetService("Lighting")
+            local LP = Players.LocalPlayer
+            local function kill(inst)
+                _G.SXE_Kill(inst)
+            end
+            pcall(function() workspace.Terrain.Decoration = false end)
+
+            local WS_KILL = {
+                FriendPanel = true, Cash = true, Unlock = true, Purchases = true,
+                PlotSign = true, CashPad = true, InvisibleWalls = true, Multiplier = true,
+                Slope = true, IncubatorMachine = true, FuseMachine = true, RobuxShop = true,
+                AdminBoard = true, SoccerScoreBoard = true, CrystalSpinWheel = true,
+                Beehive = true, CraftingMachine = true, Shop = true, Road = true,
+                EventBoard = true, TradePlazaPortal = true, LosTraders = true,
+                RNGMachine = true, Present = true, StPatricksPot = true,
+                ShopNPCRobuxIdle = true, RoadPanel = true, Honey = true,
+                Trap = true, Events = true, Sounds = true, rods = true,
+                Dev = true, ToolsAdds = true, __PROJECTILES = true, CrystalMap = true,
+                SpawnLocation = true, UFO = true, Interacts = true,
+            }
+            local PLOT_KEEP = {
+                Skin = true, Laser = true, AnimalPodiums = true,
+                DeliveryHitbox = true, StealHitbox = true, AnimalTarget = true,
+                MainRoot = true, Floor = true, Spawn = true, Door = true, Hitbox = true,
+                Base = true, Wall = true, Roof = true, SecondFloor = true, ThirdFloor = true,
+                ["structure base home"] = true, Unlock = true,
+            }
+            local PLOT_NUKE = {
+                FriendPanel = true, Cash = true, Purchases = true,
+                PlotSign = true, CashPad = true, InvisibleWalls = true, Multiplier = true,
+                LaserHitbox = true, Events = true, Sounds = true,
+                Slope = true,
+            }
+            local BODY_PART = {
+                HumanoidRootPart = true, Head = true, Torso = true,
+                UpperTorso = true, LowerTorso = true,
+                LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
+                RightUpperArm = true, RightLowerArm = true, RightHand = true,
+                LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
+                RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+                ["Left Arm"] = true, ["Right Arm"] = true,
+                ["Left Leg"] = true, ["Right Leg"] = true,
+            }
+            local CHAR_KEEP_CLASS = {
+                Humanoid = true, Animator = true, Attachment = true,
+                Motor6D = true, AnimationConstraint = true,
+                BallSocketConstraint = true, Weld = true, WeldConstraint = true,
+            }
+            local MAP_KEEP = { Ground = true, Ground_Left = true, Ground_Right = true }
+            local PART_CLASS = {
+                Part = true, MeshPart = true, UnionOperation = true,
+                WedgePart = true, CornerWedgePart = true, TrussPart = true,
+                SpawnLocation = true, Seat = true, VehicleSeat = true,
+            }
+
+            local function underUnlock(d)
+                local x = d
+                for _ = 1, 12 do
+                    if not x then return false end
+                    if x.Name == "Unlock" then return true end
+                    if x == workspace then return false end
+                    x = x.Parent
+                end
+                return false
+            end
+            local function isMine(inst)
+                if not (LP and inst) then return false end
+                if inst == LP.Character or inst.Name == LP.Name then return true end
+                return false
+            end
+            local function isVisualJunk(d)
+                local cn = d.ClassName
+                return cn == "Beam" or cn == "Trail" or cn == "ParticleEmitter"
+                    or cn == "PointLight" or cn == "SpotLight" or cn == "SurfaceLight"
+                    or cn == "Fire" or cn == "Smoke" or cn == "Sparkles"
+                    or cn == "BillboardGui" or cn == "SurfaceGui" or cn == "Highlight"
+                    or cn == "Decal" or cn == "Texture"
+            end
+            local function isSkinJunk(d)
+                if not d then return false end
+                if isVisualJunk(d) then return true end
+                return PART_CLASS[d.ClassName] == true and not d.CanCollide
+            end
+            local function isPet(inst)
+                if not inst or inst.ClassName ~= "Model" then return false end
+                return inst:FindFirstChild("FakeRootPart") ~= nil
+                    or inst:FindFirstChild("RootPart") ~= nil
+            end
+            local function stripSkin(skin)
+                if not (skin and skin.Parent) then return end
+                local dd = skin:GetDescendants()
+                local dump = {}
+                for i = 1, #dd do
+                    if isSkinJunk(dd[i]) then dump[#dump + 1] = dd[i] end
+                end
+                for i = 1, #dump do kill(dump[i]) end
+            end
+            local function skipLaserStrip(plot)
+                local keep = _G.__SXE_KeepPlot
+                if not keep then
+                    return true
+                end
+                return plot and tostring(plot.Name) == tostring(keep)
+            end
+            local function skipTimerStrip(plot)
+                return skipLaserStrip(plot)
+            end
+            local function plotOf(d)
+                local x = d
+                for _ = 1, 16 do
+                    if not x then return nil end
+                    local p = x.Parent
+                    if p and p.Name == "Plots" then return x end
+                    x = p
+                end
+                return nil
+            end
+            local function isRemainingTimeGui(d)
+                if not d then return false end
+                local x = d
+                for _ = 1, 16 do
+                    if not x then break end
+                    if x.Name == "RemainingTime" then return true end
+                    x = x.Parent
+                end
+                local cn = d.ClassName
+                if cn == "BillboardGui" or cn == "SurfaceGui" then
+                    local hit
+                    pcall(function()
+                        hit = d:FindFirstChild("RemainingTime", true)
+                    end)
+                    if hit then return true end
+                end
+                return false
+            end
+            local function stripPurchasesKeepTimer(purch)
+                if not (purch and purch.Parent) then return end
+                local kids = purch:GetChildren()
+                for i = 1, #kids do
+                    local ch = kids[i]
+                    if ch.Name ~= "PlotBlock" then
+                        kill(ch)
+                    else
+                        local dd = ch:GetDescendants()
+                        for j = 1, #dd do
+                            local d = dd[j]
+                            local cn = d.ClassName
+                            if (cn == "BillboardGui" or cn == "SurfaceGui") and not isRemainingTimeGui(d) then
+                                kill(d)
+                            end
+                        end
+                    end
+                end
+            end
+            local laserPend = {}
+            local function stripLaser(laser)
+                if not (laser and laser.Parent) then return end
+                if skipLaserStrip(laser.Parent) then return end
+                local bars = {}
+                local beamPart = {}
+                local dd = laser:GetDescendants()
+                for i = 1, #dd do
+                    local d = dd[i]
+                    if d.ClassName == "Beam" then
+                        local a0, a1 = d.Attachment0, d.Attachment1
+                        local p0 = a0 and a0.Parent
+                        local p1 = a1 and a1.Parent
+                        if p0 and p0:IsA("BasePart") then beamPart[p0] = true end
+                        if p1 and p1:IsA("BasePart") then beamPart[p1] = true end
+                    elseif d:IsA("BasePart") then
+                        bars[#bars + 1] = d
+                    end
+                end
+                if #bars > 0 then
+                    local chosen = {}
+                    for i = 1, #bars do
+                        if beamPart[bars[i]] then chosen[#chosen + 1] = bars[i] end
+                    end
+                    if #chosen == 0 then
+                        for i = 1, #bars do
+                            local d = bars[i]
+                            local s = d.Size
+                            local mx = math.max(s.X, s.Y, s.Z)
+                            local mn = math.min(s.X, s.Y, s.Z)
+                            local neon = false
+                            pcall(function()
+                                neon = d.Material == Enum.Material.Neon
+                                    or d.Material == Enum.Material.ForceField
+                            end)
+                            if neon or (mn <= 1.5 and mx >= 3) then
+                                chosen[#chosen + 1] = d
+                            end
+                        end
+                    end
+                    if #chosen == 0 then chosen = bars end
+                    local keep = chosen[1]
+                    if keep then
+                        for i = 1, #bars do
+                            if bars[i] ~= keep then kill(bars[i]) end
+                        end
+                        pcall(function()
+                            if PART_CLASS[laser.ClassName] then
+                                laser.CanCollide = false
+                                laser.CanTouch = false
+                            end
+                            keep.CanCollide = false
+                            keep.CanTouch = false
+                        end)
+                    end
+                end
+            end
+            local function queueStripLaser(laser)
+                if not laser or laserPend[laser] then return end
+                laserPend[laser] = true
+                task.defer(function()
+                    laserPend[laser] = nil
+                    stripLaser(laser)
+                end)
+            end
+            local function stripPetVfx(pet)
+                if not pet then return end
+                local dd = pet:GetDescendants()
+                local dump = {}
+                for i = 1, #dd do
+                    local d = dd[i]
+                    local n = d.Name
+                    local cn = d.ClassName
+                    if n == "VfxInstance" or n == "_VfxInstance" or n == "AnimationController"
+                        or cn == "ParticleEmitter" or cn == "Beam" or cn == "Trail"
+                        or cn == "Fire" or cn == "Smoke" or cn == "Sparkles"
+                        or cn == "Animator" or cn == "AnimationController"
+                        or cn == "Bone"
+                        or cn == "BillboardGui" or cn == "SurfaceGui" then
+                        dump[#dump + 1] = d
+                    end
+                end
+                for i = 1, #dump do kill(dump[i]) end
+            end
+            _G.SXE_StripPetVfx = stripPetVfx
+
+            local function isCharJunk(d)
+                if not d then return false end
+                local cn = d.ClassName
+                if cn == "PathfindingModifier" then return false end
+                if cn == "WrapTarget" or cn == "WrapLayer" then return true end
+                if cn == "Shirt" or cn == "ShirtGraphic" then return true end
+                if cn == "NoCollisionConstraint" then return true end
+                local nm = d.Name
+                if nm == "__HITBOX" or nm == "OriginalPosition" or nm == "OriginalSize" then return true end
+                if CHAR_KEEP_CLASS[cn] then return false end
+                if BODY_PART[nm] then return false end
+                return true
+            end
+            local function isUuidName(n)
+                return type(n) == "string" and #n == 36
+                    and string.match(n, "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
+            end
+            local function isOtherAvatar(char)
+                if not (char and char.ClassName == "Model") then return false end
+                if isMine(char) then return false end
+                if isPet(char) then return false end
+                local n = char.Name
+                if type(n) == "string" and string.sub(n, -6) == "_Clone" then return false end
+                if Players:GetPlayerFromCharacter(char) then return true end
+                if Players:FindFirstChild(n) then return true end
+                return char:FindFirstChildOfClass("Humanoid") ~= nil
+            end
+            local hookedChars = {}
+            local function stripOtherChar(char)
+                if _G.__SXE_VelFlying then return end
+                if not (char and char.Parent) or isMine(char) or not isOtherAvatar(char) then return end
+                local function sweep()
+                    local dd = char:GetDescendants()
+                    local dump = {}
+                    for i = 1, #dd do
+                        if isCharJunk(dd[i]) then dump[#dump + 1] = dd[i] end
+                    end
+                    for i = 1, #dump do kill(dump[i]) end
+                end
+                sweep()
+                if hookedChars[char] then return end
+                hookedChars[char] = true
+                char.DescendantAdded:Connect(function(d)
+                    if _G.__SXE_VelFlying then return end
+                    if d and d.Parent and not isMine(char) and isCharJunk(d) then kill(d) end
+                end)
+            end
+
+            local strippedPlots = {}
+            _G.__SXE_StrippedPlots = strippedPlots
+            local function near(a, b)
+                return math.abs(a - b) < 0.2
+            end
+            local function isPlotPadPart(d)
+                if not d or PART_CLASS[d.ClassName] ~= true then return false end
+                if d.Name == "structure base home" or d.Name == "Spawn" then return false end
+                local s = d.Size
+                if near(s.X, 4) and near(s.Y, 1) and near(s.Z, 4) then return true end
+                if near(s.X, 2) and near(s.Y, 0.5) and near(s.Z, 2) then return true end
+                return false
+            end
+            local function isPodiumPlate(d)
+                if not d or PART_CLASS[d.ClassName] ~= true then return false end
+                if d.Name == "Spawn" then return false end
+                local s = d.Size
+                if near(s.X, 6) and near(s.Y, 0.2) and near(s.Z, 6) then return true end
+                if near(s.X, 4) and near(s.Y, 0.2) and near(s.Z, 4) then return true end
+                return false
+            end
+            local function stripPlotDecor(dec)
+                if not (dec and dec.Parent) then return end
+                local dump = {}
+                local function walk(x)
+                    local kids = x:GetChildren()
+                    for i = 1, #kids do
+                        local d = kids[i]
+                        local cn = d.ClassName
+                        local nm = d.Name
+                        if nm == "Spawn" or nm == "PromptAttachment" or cn == "ProximityPrompt" then
+                        elseif cn == "Model" and isPet(d) then
+                        elseif cn == "Beam" or cn == "PointLight" then
+                            dump[#dump + 1] = d
+                        elseif isPlotPadPart(d) then
+                            dump[#dump + 1] = d
+                        else
+                            walk(d)
+                        end
+                    end
+                end
+                walk(dec)
+                for i = 1, #dump do kill(dump[i]) end
+            end
+            local function stripPodiumPlates(pods)
+                if not (pods and pods.Parent) then return end
+                local dump = {}
+                local function scan(folder)
+                    if not folder then return end
+                    local dd = folder:GetDescendants()
+                    for i = 1, #dd do
+                        local d = dd[i]
+                        if d.Name ~= "Spawn" and d.Name ~= "PromptAttachment"
+                            and d.ClassName ~= "ProximityPrompt" and isPodiumPlate(d) then
+                            dump[#dump + 1] = d
+                        end
+                    end
+                end
+                local slots = pods:GetChildren()
+                for i = 1, #slots do
+                    local slot = slots[i]
+                    local base = slot:FindFirstChild("Base")
+                    if base then scan(base:FindFirstChild("Decorations")) end
+                    scan(slot:FindFirstChild("Decorations"))
+                end
+                for i = 1, #dump do kill(dump[i]) end
+            end
+            local function handlePlotChild(plot, ch)
+                if not (ch and ch.Parent) then return end
+                local n = ch.Name
+                if n == "Skin" then stripSkin(ch); return end
+                if n == "Laser" then
+                    if not skipLaserStrip(plot) then stripLaser(ch) end
+                    return
+                end
+                if n == "AnimalPodiums" then stripPodiumPlates(ch); return end
+                if n == "Decorations" then stripPlotDecor(ch); return end
+                if n == "Purchases" then
+                    if skipTimerStrip(plot) then
+                        stripPurchasesKeepTimer(ch)
+                    else
+                        kill(ch)
+                    end
+                    return
+                end
+                if PLOT_KEEP[n] then return end
+                if PLOT_NUKE[n] then kill(ch); return end
+                if isPet(ch) then
+                    local set = _G.SXE_PrioSet
+                    if type(set) == "table" and set[string.lower(n)] ~= true then
+                        kill(ch)
+                    else
+                        stripPetVfx(ch)
+                    end
+                    return
+                end
+            end
+            local function stripPlotInteriorFast(plot)
+                if not (plot and plot.Parent) then return end
+                if _G.__SXE_MyPlot and plot.Name == _G.__SXE_MyPlot then return end
+                strippedPlots[plot.Name] = true
+                local kids = plot:GetChildren()
+                for i = 1, #kids do
+                    local ch = kids[i]
+                    if ch and ch.Parent then
+                        local n = ch.Name
+                        if n == "Skin" or n == "Laser" or n == "AnimalPodiums" or n == "Decorations" then
+                        elseif n == "Purchases" and skipTimerStrip(plot) then
+                            stripPurchasesKeepTimer(ch)
+                        elseif PLOT_KEEP[n] then
+                        elseif PLOT_NUKE[n] then
+                            kill(ch)
+                        elseif isPet(ch) then
+                            local set = _G.SXE_PrioSet
+                            if type(set) == "table" and set[string.lower(n)] ~= true then
+                                kill(ch)
+                            end
+                        end
+                    end
+                end
+            end
+            local function stripPlotVisual(plot)
+                if not (plot and plot.Parent) then return end
+                if _G.__SXE_MyPlot and plot.Name == _G.__SXE_MyPlot then return end
+                local skin = plot:FindFirstChild("Skin")
+                if skin then stripSkin(skin) end
+                local laser = plot:FindFirstChild("Laser")
+                if laser and not skipLaserStrip(plot) then stripLaser(laser) end
+                local pods = plot:FindFirstChild("AnimalPodiums")
+                if pods then stripPodiumPlates(pods) end
+                local dec = plot:FindFirstChild("Decorations")
+                if dec then stripPlotDecor(dec) end
+                local kids = plot:GetChildren()
+                for i = 1, #kids do
+                    local ch = kids[i]
+                    if isPet(ch) then stripPetVfx(ch) end
+                end
+            end
+            local function stripPlotInterior(plot)
+                stripPlotInteriorFast(plot)
+                stripPlotVisual(plot)
+            end
+            local function connectPlot(plot)
+                if not (plot and plot.Parent) then return end
+                plot.ChildAdded:Connect(function(ch)
+                    if _G.__SXE_VelFlying then return end
+                    handlePlotChild(plot, ch)
+                end)
+                plot.DescendantAdded:Connect(function(d)
+                    if _G.__SXE_VelFlying then return end
+                    if not d then return end
+                    if underUnlock(d) then return end
+                    local cn = d.ClassName
+                    if cn == "BillboardGui" or cn == "SurfaceGui" then
+                        if skipTimerStrip(plot) and isRemainingTimeGui(d) then return end
+                        kill(d)
+                        return
+                    end
+                    if d.Name == "Spawn" or d.Name == "PromptAttachment" or cn == "ProximityPrompt" then
+                        return
+                    end
+                    if d.Name == "Decorations" and d.Parent == plot then
+                        stripPlotDecor(d)
+                        return
+                    end
+                    local p = d.Parent
+                    if not p then return end
+                    if p.Name == "LaserHitbox" then kill(d); return end
+                    if PART_CLASS[d.ClassName] then
+                        if isPlotPadPart(d) then
+                            local x = p
+                            local inPlotDec, skip = false, false
+                            while x and x ~= plot do
+                                if isPet(x) or x.Name == "Spawn" or x.Name == "AnimalPodiums" then
+                                    skip = true; break
+                                end
+                                if x.Name == "Decorations" and x.Parent == plot then inPlotDec = true end
+                                x = x.Parent
+                            end
+                            if inPlotDec and not skip then kill(d); return end
+                        elseif isPodiumPlate(d) then
+                            local x = p
+                            local inDec, skip = false, false
+                            while x and x ~= plot do
+                                if x.Name == "Spawn" then skip = true; break end
+                                if x.Name == "Decorations" then inDec = true end
+                                if x.Name == "AnimalPodiums" then
+                                    if inDec and not skip then kill(d) end
+                                    return
+                                end
+                                x = x.Parent
+                            end
+                        end
+                    end
+                    local sk = p
+                    while sk and sk ~= plot do
+                        if sk.Name == "Skin" then
+                            if isSkinJunk(d) then kill(d) end
+                            return
+                        end
+                        sk = sk.Parent
+                    end
+                    local las = p
+                    while las and las ~= plot do
+                        if las.Name == "Laser" then
+                            if skipLaserStrip(plot) then return end
+                            if PART_CLASS[d.ClassName] then
+                                pcall(function()
+                                    d.CanCollide = false
+                                    d.CanTouch = false
+                                end)
+                            end
+                            queueStripLaser(las)
+                            return
+                        end
+                        las = las.Parent
+                    end
+                end)
+            end
+            local function plotIsMine(plot)
+                if not plot then return false end
+                if _G.__SXE_MyPlot and plot.Name == _G.__SXE_MyPlot then return true end
+                local ch
+                pcall(function()
+                    if _G.XenSyncGet then ch = _G.XenSyncGet(plot.Name) end
+                end)
+                if ch and _G.SXE_IsMyPlot and _G.SXE_IsMyPlot(ch) then
+                    _G.__SXE_MyPlot = plot.Name
+                    return true
+                end
+                return false
+            end
+            local function canDestroyPlot(plot)
+                if not plot then return false end
+                if plotIsMine(plot) then return false end
+                local keep = _G.__SXE_KeepPlot
+                if keep and plot.Name == keep then return false end
+                if not _G.__SXE_MyPlot then return false end
+                return plot.Name ~= _G.__SXE_MyPlot
+            end
+            local hookedPlots
+            local function hookPlot(plot)
+                if plotIsMine(plot) then return end
+                stripPlotInterior(plot)
+                connectPlot(plot)
+            end
+            local function hookPlots(folder)
+                if not folder or hookedPlots == folder then return end
+                hookedPlots = folder
+                local kids = folder:GetChildren()
+                for i = 1, #kids do
+                    if not plotIsMine(kids[i]) then
+                        stripPlotInterior(kids[i])
+                        connectPlot(kids[i])
+                    end
+                end
+                folder.ChildAdded:Connect(function(plot)
+                    hookPlot(plot)
+                    if canDestroyPlot(plot) then
+                        kill(plot)
+                    end
+                end)
+            end
+            _G.SXE_LockPrioPlot = function(plotName)
+                if not plotName then return end
+                _G.__SXE_KeepPlot = tostring(plotName)
+                local plots = workspace:FindFirstChild("Plots")
+                if not plots then return end
+                local kids = plots:GetChildren()
+                for i = 1, #kids do
+                    local plot = kids[i]
+                    if canDestroyPlot(plot) then
+                        kill(plot)
+                    end
+                end
+                local mine = _G.__SXE_MyPlot and plots:FindFirstChild(_G.__SXE_MyPlot)
+                if mine and _G.SXE_NukePlotPodiums then
+                    pcall(_G.SXE_NukePlotPodiums, mine)
+                end
+                local keepPlot = _G.__SXE_KeepPlot and plots:FindFirstChild(_G.__SXE_KeepPlot)
+                if keepPlot and _G.SXE_StripNonPrioPodiums then
+                    pcall(_G.SXE_StripNonPrioPodiums, keepPlot)
+                end
+            end
+
+            local function stripMap(map)
+                local function handle(x)
+                    if _G.__SXE_VelFlying then return end
+                    if x and not MAP_KEEP[x.Name] then kill(x) end
+                end
+                local kids = map:GetChildren()
+                for i = 1, #kids do handle(kids[i]) end
+                map.ChildAdded:Connect(handle)
+            end
+            local hookedRma
+            local rmaBoxDone = false
+            local function hookRma(rma)
+                if not rma then return end
+                if rmaBoxDone then
+                    kill(rma)
+                    return
+                end
+                if hookedRma == rma then return end
+                hookedRma = rma
+                local function nuke()
+                    if _G.__SXE_VelFlying then return end
+                    if rmaBoxDone then return end
+                    rmaBoxDone = true
+                    kill(rma)
+                end
+                if #rma:GetChildren() > 0 then
+                    nuke()
+                else
+                    rma.ChildAdded:Connect(nuke)
+                end
+            end
+            local function onWsChild(ch)
+                if not ch then return end
+                if _G.__SXE_VelFlying then return end
+                local n = ch.Name
+                if ch.ClassName == "Camera" or ch.ClassName == "Terrain" then return end
+                if n == "Plots" then hookPlots(ch); return end
+                if n == "RenderedMovingAnimals" then hookRma(ch); return end
+                if n == "Map" then stripMap(ch); return end
+                if isMine(ch) then return end
+                if isUuidName(n) then kill(ch); return end
+                if isOtherAvatar(ch) then stripOtherChar(ch); return end
+                if ch.ClassName == "Model" then
+                    ch.ChildAdded:Connect(function()
+                        if isOtherAvatar(ch) then stripOtherChar(ch) end
+                    end)
+                end
+                if string.sub(n, 1, 7) == "BeeHive" or string.sub(n, 1, 7) == "Sentry_" then
+                    kill(ch)
+                    return
+                end
+                if WS_KILL[n] or ch.ClassName == "Highlight" then kill(ch); return end
+                if ch.ClassName == "Model" and string.find(n, "'s Rainbow", 1, true) then
+                    kill(ch)
+                end
+            end
+            local wsch = workspace:GetChildren()
+            local plotsFolder, mapFolder, rmaFolder
+            local rest = {}
+            for i = 1, #wsch do
+                local ch = wsch[i]
+                local n = ch.Name
+                if n == "Plots" then plotsFolder = ch
+                elseif n == "Map" then mapFolder = ch
+                elseif n == "RenderedMovingAnimals" then rmaFolder = ch
+                else rest[#rest + 1] = ch end
+            end
+            if mapFolder then stripMap(mapFolder) end
+            if rmaFolder then hookRma(rmaFolder) end
+            for i = 1, #rest do onWsChild(rest[i]) end
+            if plotsFolder then hookPlots(plotsFolder) end
+            workspace.ChildAdded:Connect(onWsChild)
+
+            local function hookPlrChar(plr)
+                if not plr or plr == LP then return end
+                if plr.Character then stripOtherChar(plr.Character) end
+                plr.CharacterAdded:Connect(stripOtherChar)
+            end
+            local plrs = Players:GetPlayers()
+            for i = 1, #plrs do hookPlrChar(plrs[i]) end
+            Players.PlayerAdded:Connect(hookPlrChar)
+
+            local function onLit(x)
+                if _G.__SXE_VelFlying then return end
+                if not x then return end
+                if x.Name == "__RoyalSky" or x.Name == "__RoyalAtmo" then return end
+                local cn = x.ClassName
+                if cn == "SunRaysEffect" or cn == "ColorCorrectionEffect" then
+                    kill(x)
+                elseif cn == "Sky" or cn == "Atmosphere" or cn == "Clouds" then
+                    kill(x)
+                end
+            end
+            local lit = Lighting:GetChildren()
+            for i = 1, #lit do onLit(lit[i]) end
+            Lighting.ChildAdded:Connect(onLit)
+
+            task.defer(function()
+                task.wait(0.5)
+                local Lighting = game:GetService("Lighting")
+
+                local function applyPink()
+                    Lighting.FogColor = Color3.fromRGB(100, 60, 85)
+                    Lighting.FogStart = 300
+                    Lighting.FogEnd = 2000
+                    Lighting.Brightness = 1
+                    Lighting.OutdoorAmbient = Color3.fromRGB(120, 80, 110)
+                    Lighting.Ambient = Color3.fromRGB(110, 70, 100)
+                    Lighting.ClockTime = 4
+                    Lighting.GlobalShadows = true
+
+                    local atmo = Lighting:FindFirstChild("__RoyalAtmo")
+                    if not atmo then
+                        atmo = Instance.new("Atmosphere")
+                        atmo.Name = "__RoyalAtmo"
+                        atmo.Parent = Lighting
+                    end
+                    atmo.Density = 0.3
+                    atmo.Color = Color3.fromRGB(120, 70, 100)
+                    atmo.Decay = Color3.fromRGB(90, 50, 75)
+                    atmo.Glare = 0
+                    atmo.Haze = 2
+                    atmo.Offset = 0.25
+                end
+
+                applyPink()
+                task.spawn(function()
+                    while true do
+                        applyPink()
+                        task.wait(2)
+                    end
+                end)
+
+                pcall(function()
+                    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+                end)
+                pcall(function()
+                    UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+                end)
+            end)
+            local function stripCamFx(x)
+                if not x then return end
+                local cn = x.ClassName
+                if cn == "ColorCorrectionEffect" or cn == "BlurEffect" then kill(x) end
+            end
+            local hookedCam
+            local function hookCam(cam)
+                if not cam or hookedCam == cam then return end
+                hookedCam = cam
+                local ck = cam:GetChildren()
+                for i = 1, #ck do stripCamFx(ck[i]) end
+                cam.ChildAdded:Connect(stripCamFx)
+            end
+            hookCam(workspace.CurrentCamera)
+            workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+                hookCam(workspace.CurrentCamera)
+            end)
+            workspace.DescendantAdded:Connect(function(d)
+                if not d then return end
+                if _G.__SXE_VelFlying then return end
+                local cn = d.ClassName
+                if cn == "BillboardGui" or cn == "SurfaceGui" or cn == "Decal" or cn == "Texture" then
+                    if underUnlock(d) then return end
+                    if (cn == "BillboardGui" or cn == "SurfaceGui")
+                        and skipTimerStrip(plotOf(d)) and isRemainingTimeGui(d) then
+                        return
+                    end
+                    kill(d)
+                end
+            end)
+            if mapFolder and mapFolder.Parent then
+                local md = mapFolder:GetDescendants()
+                for i = 1, #md do
+                    local cn = md[i].ClassName
+                    if cn == "Decal" or cn == "Texture" then kill(md[i]) end
+                end
+            end
+            do
+                local ter = workspace.Terrain
+                pcall(function() ter.Decoration = false end)
+                pcall(function() ter:Clear() end)
+                local kids = ter:GetChildren()
+                for i = 1, #kids do kill(kids[i]) end
+                ter.ChildAdded:Connect(function(ch)
+                    if _G.__SXE_VelFlying then return end
+                    kill(ch)
+                end)
+                ter.DescendantAdded:Connect(function(d)
+                    if _G.__SXE_VelFlying then return end
+                    if d then kill(d) end
+                end)
+            end
+            _G.__SXE_StripDone = true
+        end
+
+        if not game:IsLoaded() then
+            game.Loaded:Wait()
+        end
+        do
+            local Players = game:GetService("Players")
+            local lp = Players.LocalPlayer or Players.PlayerAdded:Wait()
+            if not lp.Character then
+                lp.CharacterAdded:Wait()
+            end
+            if not workspace:FindFirstChild("Plots") then
+                workspace:WaitForChild("Plots", 10)
+            end
+        end
+        task.spawn(function()
+            pcall(__sxeStrip)
+        end)
+
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        if not _G.__SXE_SyncBoot then
+        do
+        local _xchan
+        local _synInst, _syncMod
+        local function _synNow()
+            if _synInst and _synInst.Parent then return _synInst end
+            local p = ReplicatedStorage:FindFirstChild("Packages")
+            _synInst = p and p:FindFirstChild("Synchronizer")
+            return _synInst
+        end
+        local function _trySenv()
+            if _xchan then return true end
+            local syn = _synNow()
+            if not syn then return false end
+            if type(_syncMod) ~= "table" then
+                local req = (getrenv and getrenv().require) or require
+                local ok, mod = pcall(req, syn)
+                if ok and type(mod) == "table" then _syncMod = mod end
+            end
+            local getFn = type(_syncMod) == "table" and rawget(_syncMod, "Get")
+            local gf = getfenv or (debug and debug.getfenv)
+            if type(getFn) ~= "function" or type(gf) ~= "function" then return false end
+            local ok, env = pcall(gf, getFn)
+            if not ok or type(env) ~= "table" then return false end
+            local ch = rawget(env, "Channels")
+            if type(ch) ~= "table" then return false end
+            _xchan = ch
+            return true
+        end
+        local function _chans()
+            if _xchan then return _xchan end
+            _trySenv()
+            return _xchan
+        end
+
+        _G.XenSyncAll = function() return _chans() end
+        _G.XenSyncGet = _G.XenSyncGet or function(idx)
+            local t = _chans()
+            if not t or idx == nil then return nil end
+            local ok, cd = pcall(rawget, t, idx)
+            if ok and type(cd) == "table" then return cd end
+            local ok2, cd2 = pcall(function() return t[idx] end)
+            if ok2 and type(cd2) == "table" then return cd2 end
+            return nil
+        end
+        _G.SXE_IsPlotChanKey = function(k)
+            return type(k) == "string" and #k >= 32 and string.find(k, "-", 1, true) ~= nil
+        end
+
+        _G.sProp = _G.sProp or function(ch, key)
+            if type(ch) ~= "table" or key == nil then return nil end
+            local ct = rawget(ch, "CacheTable")
+            if type(ct) ~= "table" then
+                local okC, c2 = pcall(function() return ch.CacheTable end)
+                if okC and type(c2) == "table" then ct = c2 end
+            end
+            if type(ct) ~= "table" then return nil end
+            local v = rawget(ct, key)
+            if v ~= nil then return v end
+            local okV, v2 = pcall(function() return ct[key] end)
+            if okV then return v2 end
+            return nil
+        end
+
+        end
+        end
+
+        priorityList = {
+            "Headless Horseman",
+            "Signore Carapace",
+            "Strawberry Elephant",
+            "Elefanto Frigo",
+            "John Pork",
+            "Meowl",
+            "Skibidi Toilet",
+            "Arcadragon",
+            "Griffin",
+            "Dragon Gingerini",
+            "Dragon Aquanini",
+            "Love Love Bear",
+            "Grabatron",
+            "Antonio",
+            "Moby Bros",
+            "Jelly Moby",
+            "La Supreme Combinasion",
+            "Ginger Gerat",
+            "Digi Narwhal",
+            "Kalika Bros",
+            "Fishino Clownino",
+            "Kraken",
+            "Hydra Bunny",
+            "Bunny and Eggy",
+            "Pancake and Syrup",
+            "Hydra Dragon Cannelloni",
+            "Dragon Cannelloni",
+            "Sammyni Cakini",
+            "Tirilikalika Tirilikalako",
+            "Ketupat Bros",
+            "Duggy Bros",
+            "La Casa Boo",
+            "Rosey and Teddy",
+            "Dug dug dug",
+            "Rico Dinero",
+            "Foxini Lanternini",
+            "Capitano Americano",
+            "Venuspino",
+            "Los Admins",
+            "La Craft Machine",
+            "Bearito Cabinito",
+            "Guest 666",
+            "Los Hackers",
+            "Cooki and Milki",
+            "Popcuru and Fizzuru",
+            "Globa Steppa",
+            "Cerberus",
+            "Burguro And Fryuro",
+            "La Secret Combinasion",
+            "Capitano Moby",
+            "Garama and Madundung",
+            "Quackini Snackini",
+            "Cash or Card",
+
+        }
+        _G.SXE_PrioSet = {}
+        for _, n in ipairs(priorityList) do
+            if type(n) == "string" and n ~= "" then
+                _G.SXE_PrioSet[string.lower(n)] = true
+            end
+        end
+        task.defer(function()
+            local plots = workspace:FindFirstChild("Plots")
+            if not plots then return end
+            local set = _G.SXE_PrioSet
+            if type(set) ~= "table" then return end
+            for _, plot in ipairs(plots:GetChildren()) do
+                for _, ch in ipairs(plot:GetChildren()) do
+                    if not ch:IsA("Model") then continue end
+                    if not (ch:FindFirstChild("RootPart") or ch:FindFirstChild("FakeRootPart")
+                        or ch:FindFirstChildWhichIsA("AnimationController", true)) then
+                        continue
+                    end
+                    if not set[string.lower(ch.Name)] then
+                        _G.SXE_Kill(ch)
+                    else
+                        pcall(_G.SXE_StripPetVfx, ch)
+                    end
+                end
+            end
+        end)
+        do
+            local Players = game:GetService("Players")
+            local LP = Players.LocalPlayer
+            local function getPlotChannel(plotName)
+                local channel
+                pcall(function() channel = _G.XenSyncGet(plotName) end)
+                return channel
+            end
+            local function channelGet(channel, key)
+                return _G.sProp(channel, key)
+            end
+            local _myPlotYes = setmetatable({}, { __mode = "k" })
+            local function isMyPlot(channel)
+                if not channel then return false end
+                if _myPlotYes[channel] then return true end
+                local owner = channelGet(channel, "Owner")
+                if not owner then return false end
+                local result = false
+                pcall(function()
+                    if typeof(owner) == "Instance" and owner:IsA("Player") then
+                        result = owner.UserId == LP.UserId
+                    elseif type(owner) == "table" and owner.UserId then
+                        result = owner.UserId == LP.UserId
+                    elseif typeof(owner) == "Instance" then
+                        result = owner == LP
+                    end
+                end)
+                if result then _myPlotYes[channel] = true end
+                return result
+            end
+            local _noPrioN, _noPrioSt = {}, {}
+            local _prioSlots, _podHook, _myPodNuke = {}, {}, {}
+            local function nukePlotPodiums(plot)
+                if not (plot and plot.Parent) then return end
+                if _myPodNuke[plot] then
+                    local pods = plot:FindFirstChild("AnimalPodiums")
+                    if pods then
+                        local kids = pods:GetChildren()
+                        for i = 1, #kids do _G.SXE_Kill(kids[i]) end
+                    end
+                    return
+                end
+                _myPodNuke[plot] = true
+                local function wipe(folder)
+                    if not folder then return end
+                    local kids = folder:GetChildren()
+                    for i = 1, #kids do _G.SXE_Kill(kids[i]) end
+                    folder.ChildAdded:Connect(function(ch)
+                        _G.SXE_Kill(ch)
+                    end)
+                end
+                wipe(plot:FindFirstChild("AnimalPodiums"))
+                plot.ChildAdded:Connect(function(ch)
+                    if ch and ch.Name == "AnimalPodiums" then wipe(ch) end
+                end)
+            end
+            local function stripNonPrioPodiums(plot)
+                if not (plot and plot.Parent) then return end
+                if _G.__SXE_MyPlot and plot.Name == _G.__SXE_MyPlot then
+                    nukePlotPodiums(plot)
+                    return
+                end
+                local set = _G.SXE_PrioSet
+                if type(set) ~= "table" then return end
+                local ch
+                pcall(function() ch = _G.XenSyncGet(plot.Name) end)
+                if ch and isMyPlot(ch) then
+                    _G.__SXE_MyPlot = plot.Name
+                    nukePlotPodiums(plot)
+                    return
+                end
+                local list = ch and channelGet(ch, "AnimalList")
+                if type(list) ~= "table" then return end
+                local keepSlots = {}
+                for slot, ad in pairs(list) do
+                    if type(ad) == "table" and type(ad.Index) == "string"
+                        and set[string.lower(ad.Index)] then
+                        keepSlots[tostring(slot)] = true
+                    end
+                end
+                if not next(keepSlots) then return end
+                _prioSlots[plot.Name] = keepSlots
+                local pods = plot:FindFirstChild("AnimalPodiums")
+                if not pods then return end
+                local kids = pods:GetChildren()
+                for i = 1, #kids do
+                    local slotInst = kids[i]
+                    if not keepSlots[tostring(slotInst.Name)] then
+                        _G.SXE_Kill(slotInst)
+                    end
+                end
+                if not _podHook[plot] then
+                    _podHook[plot] = true
+                    pods.ChildAdded:Connect(function(slotInst)
+                        local ks = _prioSlots[plot.Name]
+                        if slotInst and ks and not ks[tostring(slotInst.Name)] then
+                            _G.SXE_Kill(slotInst)
+                        end
+                    end)
+                end
+            end
+            _G.SXE_NukePlotPodiums = nukePlotPodiums
+            _G.SXE_StripNonPrioPodiums = stripNonPrioPodiums
+            local function stripNoPrioPlots()
+                local plots = workspace:FindFirstChild("Plots")
+                if not plots then return end
+                local keep = _G.__SXE_KeepPlot
+                local set = _G.SXE_PrioSet
+                for _, plot in ipairs(plots:GetChildren()) do
+                    if plot.Name == _G.__SXE_MyPlot then
+                        pcall(nukePlotPodiums, plot)
+                        continue
+                    end
+                    if keep and plot.Name == keep then
+                        pcall(stripNonPrioPodiums, plot)
+                        continue
+                    end
+                    local ch
+                    pcall(function() ch = _G.XenSyncGet(plot.Name) end)
+                    if ch and isMyPlot(ch) then
+                        _G.__SXE_MyPlot = plot.Name
+                        pcall(nukePlotPodiums, plot)
+                        continue
+                    end
+                    local list = ch and channelGet(ch, "AnimalList")
+                    if type(list) ~= "table" then continue end
+                    local n, hasPrio = 0, false
+                    for _, ad in pairs(list) do
+                        n += 1
+                        if type(ad) == "table" and type(ad.Index) == "string"
+                            and set and set[string.lower(ad.Index)] then
+                            hasPrio = true
+                        end
+                    end
+                    if not hasPrio then
+                        for _, c in ipairs(plot:GetChildren()) do
+                            if c:IsA("Model") and (c:FindFirstChild("RootPart") or c:FindFirstChild("FakeRootPart"))
+                                and set and set[string.lower(c.Name)] then
+                                hasPrio = true
+                                break
+                            end
+                        end
+                    end
+                    if hasPrio then
+                        _noPrioN[plot.Name] = nil
+                        _noPrioSt[plot.Name] = nil
+                        if _G.__SXE_StrippedPlots then _G.__SXE_StrippedPlots[plot.Name] = nil end
+                        pcall(stripNonPrioPodiums, plot)
+                        continue
+                    end
+                    local key = plot.Name
+                    if n == (_noPrioN[key] or -1) then
+                        _noPrioSt[key] = (_noPrioSt[key] or 0) + 1
+                    else
+                        _noPrioN[key] = n
+                        _noPrioSt[key] = 0
+                    end
+                    if (_noPrioSt[key] or 0) >= 1 then
+                        if _G.__SXE_MyPlot and plot.Name ~= _G.__SXE_MyPlot
+                            and not (keep and plot.Name == keep) then
+                            _G.SXE_Kill(plot)
+                        end
+                    end
+                end
+            end
+            _G.SXE_StripNoPrioPlots = stripNoPrioPlots
+            task.spawn(function()
+                while true do
+                    if _G.__SXE_StripDone and not _G.__SXE_VelFlying then
+                        pcall(stripNoPrioPlots)
+                    end
+                    task.wait(2)
+                end
+            end)
+        end
+
+    end)
+    if not _okOPT then warn("[OPTIMIZER] erreur: " .. tostring(_errOPT)) end
+end)
