@@ -475,7 +475,7 @@ local priorityList = {
     "Examen Bros",
     "Capitano Americano",
     "Los Hackers",
-    "Fragola La La La",
+    "Gold and Diamond",
     "Gym Bros",
     "Spyder Elephant",
     "La Breakfast Combinasion",
